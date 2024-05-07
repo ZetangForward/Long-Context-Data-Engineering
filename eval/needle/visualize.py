@@ -7,7 +7,7 @@ import pandas as pd
 import json
 import glob
 
-FOLDER_PATH = "results/llama-2-7b-80k/"
+FOLDER_PATH = "results/llama-2-7b-80k_testPPL_64000/"
 MODEL_NAME = "LLaMA 2 7B continue-trained on 5B tokens 80K length Per-source length upsampled data"
 PRETRAINED_LEN=81920
 
@@ -36,14 +36,28 @@ def main():
             # score = json_data.get("score", None)
             model_response = json_data.get("model_response", None).lower()
             needle = json_data.get("needle", None).lower()
+            str_ppls = json_data.get("ppls", None)
+            shift_st, shift_end = json_data.get("shift_st", None), json_data.get("shift_end", None)
+            ppls = json.loads(str_ppls) if str_ppls is not None else None
             expected_answer = "eat a sandwich and sit in Dolores Park on a sunny day.".lower().split()
             score = len(set(model_response.split()).intersection(set(expected_answer))) / len(expected_answer)
             # Appending to the list
-            data.append({
-                "Document Depth": document_depth,
-                "Context Length": context_length,
-                "Score": score
+            """
+            量化PPLs的变化指标
+            1. 开头的PPL变化 bt_ppl_cg
+            2. 结尾的PPL变化 end_ppl_cg
+            3. 前半句话的PPL bt_ins_avg_ppl
+            4. 后半句话的PPL ed_ins_avg_ppl
+            """
+            bt_ppl_cg = abs(sum(ppls[shift_st-2: shift_st]) - sum(ppls[shift_st: shift_st+2])) / 2
+            end_ppl_cg = abs(sum(ppls[shift_end-2: shift_end]) - sum(ppls[shift_end: shift_end+2])) / 2
+            bt_ins_avg_ppl = sum(ppls[:shift_st]) / shift_st
+            ed_ins_avg_ppl = sum(ppls[shift_end: ]) / shift_end
+            data.append({"Document Depth": document_depth, "Context Length": context_length,
+                "Score": score, "PPLs": ppls,  "bt_ppl_cg": bt_ppl_cg, "end_ppl_cg": end_ppl_cg, 
+                "bt_ins_avg_ppl": bt_ins_avg_ppl, "ed_ins_avg_ppl": ed_ins_avg_ppl,
             })
+    
 
     # Creating a DataFrame
     df = pd.DataFrame(data)
@@ -55,6 +69,10 @@ def main():
 
     print(df.head())
     print("Overall score %.3f" % df["Score"].mean())
+
+    sns.jointplot("bt_ppl_cg","end_ppl_cg",data=df)
+
+    plt.show()
 
     pivot_table = pd.pivot_table(df, values='Score', index=['Document Depth', 'Context Length'], aggfunc='mean').reset_index() # This will aggregate
     pivot_table = pivot_table.pivot(index="Document Depth", columns="Context Length", values="Score") # This will turn into a proper pivot
@@ -91,6 +109,8 @@ def main():
     save_path = "img/%s.png" % model_name
     print("saving at %s" % save_path)
     plt.savefig(save_path, dpi=150)
+
+
 
 
 if __name__ == "__main__":

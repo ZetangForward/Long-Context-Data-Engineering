@@ -58,6 +58,13 @@ def reset_rope(model, model_max_train_len, scaling_factor):
         l.self_attn.rotary_emb._set_cos_sin_cache(seq_len=model_max_train_len, device="cpu", dtype=torch.float32)
     return
 
+"""
+有哪些原因会导致捷径学习？
+1. 变化的PPL -> 导致head过分关注某些内容
+2. 训练数据泄露 -> 使用模型PPL大的sentence作为passkey还能检索出来吗
+
+"""
+
 class LLMNeedleHaystackTester:
     """
     This class is used to test the LLM Needle Haystack.
@@ -289,6 +296,8 @@ class LLMNeedleHaystackTester:
             'test_duration_seconds' : test_elapsed_time,
             'test_timestamp_utc' : datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S%z'),
             'ppls': str_ppls,
+            "shift_st": shift_st, 
+            "shift_end": shift_end
         }
 
         self.testing_results.append(results)
