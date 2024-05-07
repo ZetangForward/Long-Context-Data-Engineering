@@ -270,22 +270,22 @@ class LLMNeedleHaystackTester:
                 # test ppl for prompt position
                 outputs = self.model_to_test(input_ids)
                 st, end = self.find_sublist(self.needle_tok, input_ids)
-                exp_st, exp_end = max(0, st - 10), min(input_ids.size(-1), end + 10) # expend st and end value to view wider positions
+                length = end - st + 1
+                exp_st, exp_end = max(0, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
-                import pdb; pdb.set_trace()
-                prefix_logits, suffix_logits = outputs.logits[shift_st:]
-                logits = outputs.logits[0, exp_st-1: exp_end, :]  # shift logits
-                labels = input_ids[0, exp_st: exp_end+1]
-                loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
-                ppls = torch.exp(loss_fct(logits, labels))
-                ppls = [round(i, 3) for i in ppls.cpu().tolist()]
+                prefix_logits, needle_logits, suffix_logits = outputs.logits[0, exp_st-1:st-1, :], outputs.logits[0, st-1:end-1, :], outputs.logits[0, end-1:exp_end-1, :]
+                prefix_labels, needle_labels, suffix_labels = input_ids[0,exp_st:st], input_ids[0,st:end], input_ids[0,end:exp_end]
+                loss_fct = torch.nn.CrossEntropyLoss(reduction="mean")
+                prefix_ppl, needle_ppl, suffix_ppl = torch.exp(loss_fct(prefix_logits, prefix_labels)), \
+                                                     torch.exp(loss_fct(needle_logits, needle_labels)), \
+                                                     torch.exp(loss_fct(suffix_logits, suffix_labels))
+                prefix_ppl, needle_ppl, suffix_ppl = prefix_ppl.item(), needle_ppl.item(), suffix_ppl.item()
                 output_ids = self.model_to_test.generate(input_ids, max_new_tokens=50)
                 response = self.enc.decode(output_ids[0][input_ids.shape[1]:], skip_special_tokens=True).strip()
 
         test_end_time = time.time()
         test_elapsed_time = test_end_time - test_start_time
         score = scorer.score(self.needle, response)['rouge1'].fmeasure*10
-        str_ppls = str(ppls)
         
         results = {
             'model' : self.model_to_test_description,
@@ -297,7 +297,7 @@ class LLMNeedleHaystackTester:
             'score' : score,
             'test_duration_seconds' : test_elapsed_time,
             'test_timestamp_utc' : datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S%z'),
-            'ppls': str_ppls,
+            'ppls': [prefix_ppl, needle_ppl, suffix_ppl],
             "shift_st": shift_st, 
             "shift_end": shift_end
         }
