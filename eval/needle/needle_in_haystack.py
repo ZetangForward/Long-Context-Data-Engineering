@@ -272,6 +272,8 @@ class LLMNeedleHaystackTester:
                 st, end = self.find_sublist(self.needle_tok, input_ids)
                 exp_st, exp_end = max(0, st - 10), min(input_ids.size(-1), end + 10) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
+                import pdb; pdb.set_trace()
+                prefix_logits, suffix_logits = outputs.logits[shift_st:]
                 logits = outputs.logits[0, exp_st-1: exp_end, :]  # shift logits
                 labels = input_ids[0, exp_st: exp_end+1]
                 loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
