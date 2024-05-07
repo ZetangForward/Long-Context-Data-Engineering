@@ -44,14 +44,13 @@ from anthropic import Anthropic
 import numpy as np
 import argparse
 from rouge_score import rouge_scorer
-import tensor_parallel as tp
-
-scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
-
 from openai import OpenAI
 from datetime import datetime, timezone
 import time
 import torch
+from modelzipper.tutils import *
+
+scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
 def reset_rope(model, model_max_train_len, scaling_factor):
     for l in model.model.layers:
@@ -65,6 +64,7 @@ class LLMNeedleHaystackTester:
     """
     def __init__(self,
                  needle="\nThe best thing to do in San Francisco is eat a sandwich and sit in Dolores Park on a sunny day.\n",
+                 needle2="\nThe best thing to do in New York is walk across the Brooklyn Bridge for stunning city views.\n",
                  haystack_dir="PaulGrahamEssays",
                  retrieval_question="What is the best thing to do in San Francisco?",
                  results_version = 1,
@@ -181,6 +181,8 @@ class LLMNeedleHaystackTester:
         self.evaluation_model = None
         self.debug='debug'
         model_name = model_name.split('/')[-1]
+        self.needle_tok = self.enc(self.needle, return_tensors="pt").input_ids[0][2:].tolist()
+
 
     def logistic(self, x, L=100, x0=50, k=.1):
         if x == 0:
@@ -205,7 +207,7 @@ class LLMNeedleHaystackTester:
         # Generate the prompt for the Anthropic model
         # Replace the following line with the appropriate prompt structure
         if(self.model_provider not in ["OpenAI", "Anthropic"]):
-            test_format=f"<|im_start|> This is a very long story book: <book> {context} </book>.\n Based on the content of the book, Question: {self.retrieval_question}\nAnswer:"
+            test_format=f"<|im_start|> This is a very long story book: <book> {context} </book>.\n Based on the content of the book, Question: {self.retrieval_question}\nAnswer: The best thing to do in San Francisco is"
             return test_format
         else: 
             return [
@@ -255,17 +257,28 @@ class LLMNeedleHaystackTester:
             response = response.choices[0].message.content
         else:
             prompt = self.enc(prompt, return_tensors="pt")
+            
             input_ids = prompt['input_ids'].to(self.model_to_test.device)
             with torch.no_grad():
+                # test ppl for prompt position
+                outputs = self.model_to_test(input_ids)
+                st, end = self.find_sublist(self.needle_tok, input_ids)
+                exp_st, exp_end = max(0, st - 10), min(input_ids.size(-1), end + 10) # expend st and end value to view wider positions
+                shift_st, shift_end = st - exp_st, exp_end - end
+                logits = outputs.logits[0, exp_st-1: exp_end, :]  # shift logits
+                labels = input_ids[0, exp_st: exp_end+1]
+                loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+                ppls = torch.exp(loss_fct(logits, labels))
+                ppls = [round(i, 3) for i in ppls.cpu().tolist()]
                 output_ids = self.model_to_test.generate(input_ids, max_new_tokens=50)
                 response = self.enc.decode(output_ids[0][input_ids.shape[1]:], skip_special_tokens=True).strip()
 
         test_end_time = time.time()
         test_elapsed_time = test_end_time - test_start_time
         score = scorer.score(self.needle, response)['rouge1'].fmeasure*10
-
+        str_ppls = str(ppls)
+        
         results = {
-            # 'context' : context, # Uncomment this line if you'd like to save the context the model was asked to retrieve from. Warning: This will become very large.
             'model' : self.model_to_test_description,
             'context_length' : int(context_length),
             'depth_percent' : float(depth_percent),
@@ -274,7 +287,8 @@ class LLMNeedleHaystackTester:
             'model_response' : response,
             'score' : score,
             'test_duration_seconds' : test_elapsed_time,
-            'test_timestamp_utc' : datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S%z')
+            'test_timestamp_utc' : datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S%z'),
+            'ppls': str_ppls,
         }
 
         self.testing_results.append(results)
@@ -315,6 +329,14 @@ class LLMNeedleHaystackTester:
             print("Writing at %s" % p)
             with open(p, 'w') as f:
                 json.dump(results, f)
+
+    def find_sublist(self, sub, bigger):
+        bigger = bigger.cpu().tolist()[0]
+        for i in range(len(bigger) - len(sub) + 1):
+            if bigger[i:i+len(sub)] == sub:
+                return i, i + len(sub)
+        return None, None
+
 
     def result_exists(self, context_length, depth_percent):
         """
@@ -378,7 +400,6 @@ class LLMNeedleHaystackTester:
         else:
             # Go get the position (in terms of tokens) to insert your needle
             insertion_point = int(len(tokens_context) * (depth_percent / 100))
-            # import ipdb; ipdb.set_trace()
 
             # tokens_new_context represents the tokens before the needle
             tokens_new_context = tokens_context[:insertion_point]
