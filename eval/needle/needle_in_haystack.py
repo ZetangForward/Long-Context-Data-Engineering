@@ -268,7 +268,6 @@ class LLMNeedleHaystackTester:
             response = response.choices[0].message.content
         else:
             prompt = self.enc(prompt, return_tensors="pt")
-            
             input_ids = prompt['input_ids'].to(self.model_to_test.device)
             with torch.no_grad():
                 outputs = self.model_to_test(input_ids)

@@ -35,10 +35,14 @@ def main():
             # score = json_data.get("score", None)
             model_response = json_data.get("model_response", None).lower()
             needle = json_data.get("needle", None).lower()
-            str_ppls = json_data.get("ppls", None)
+            ppls = json_data.get("ppls", None)
             shift_st, shift_end = json_data.get("shift_st", None), json_data.get("shift_end", None)
-            ppls = json.loads(str_ppls) if str_ppls is not None else None
             expected_answer = "eat a sandwich and sit in Dolores Park on a sunny day.".lower().split()
+            expected_answer1="The best thing to do in San Francisco is to walk around the city."
+            expected_answer2="The best thing to do in San Francisco is to walk around the city. It's a great way to see the sights and get some exercise at the same time."
+            
+            haystack_dir="PaulGrahamEssays",
+            retrieval_question="What is the best thing to do in San Francisco?",
             score = len(set(model_response.split()).intersection(set(expected_answer))) / len(expected_answer)
             # Appending to the list
             """
@@ -68,10 +72,6 @@ def main():
 
     print(df.head())
     print("Overall score %.3f" % df["Score"].mean())
-
-    sns.jointplot("bt_ppl_cg","end_ppl_cg",data=df)
-
-    plt.show()
 
     pivot_table = pd.pivot_table(df, values='Score', index=['Document Depth', 'Context Length'], aggfunc='mean').reset_index() # This will aggregate
     pivot_table = pivot_table.pivot(index="Document Depth", columns="Context Length", values="Score") # This will turn into a proper pivot
