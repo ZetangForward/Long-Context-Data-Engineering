@@ -267,19 +267,22 @@ class LLMNeedleHaystackTester:
             
             input_ids = prompt['input_ids'].to(self.model_to_test.device)
             with torch.no_grad():
-                # test ppl for prompt position
                 outputs = self.model_to_test(input_ids)
                 st, end = self.find_sublist(self.needle_tok, input_ids)
                 length = end - st + 1
-                exp_st, exp_end = max(0, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
+                exp_st, exp_end = max(1, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
                 prefix_logits, needle_logits, suffix_logits = outputs.logits[0, exp_st-1:st-1, :], outputs.logits[0, st-1:end-1, :], outputs.logits[0, end-1:exp_end-1, :]
                 prefix_labels, needle_labels, suffix_labels = input_ids[0,exp_st:st], input_ids[0,st:end], input_ids[0,end:exp_end]
                 loss_fct = torch.nn.CrossEntropyLoss(reduction="mean")
-                prefix_ppl, needle_ppl, suffix_ppl = torch.exp(loss_fct(prefix_logits, prefix_labels)), \
-                                                     torch.exp(loss_fct(needle_logits, needle_labels)), \
-                                                     torch.exp(loss_fct(suffix_logits, suffix_labels))
-                prefix_ppl, needle_ppl, suffix_ppl = prefix_ppl.item(), needle_ppl.item(), suffix_ppl.item()
+                
+                prefix_ppl, needle_ppl = torch.exp(loss_fct(prefix_logits, prefix_labels)), torch.exp(loss_fct(needle_logits, needle_labels))
+                prefix_ppl, needle_ppl = prefix_ppl.item(), needle_ppl.item()
+                if end != exp_end:                                     
+                    suffix_ppl = torch.exp(loss_fct(suffix_logits, suffix_labels))
+                    suffix_ppl = suffix_ppl.item()
+                else:
+                    suffix_ppl = 0.0  # if 0.0 then no suffix
                 output_ids = self.model_to_test.generate(input_ids, max_new_tokens=50)
                 response = self.enc.decode(output_ids[0][input_ids.shape[1]:], skip_special_tokens=True).strip()
 
