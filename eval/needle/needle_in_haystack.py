@@ -71,7 +71,8 @@ class LLMNeedleHaystackTester:
     """
     def __init__(self,
                  needle="\nThe best thing to do in San Francisco is eat a sandwich and sit in Dolores Park on a sunny day.\n",
-                 needle2="\nThe best thing to do in New York is walk across the Brooklyn Bridge for stunning city views.\n",
+                 ca_needle1="\nThe best thing to do in San Francisco is to walk around the city.\n",
+                 ca_needle2="\nThe best thing to do in San Francisco is to walk around the city. It's a great way to see the sights and get some exercise at the same time.\n",
                  haystack_dir="PaulGrahamEssays",
                  retrieval_question="What is the best thing to do in San Francisco?",
                  results_version = 1,
@@ -94,7 +95,8 @@ class LLMNeedleHaystackTester:
                  save_contexts = True,
                  final_context_length_buffer = 200,
                  seconds_to_sleep_between_completions = None,
-                 print_ongoing_status = True):
+                 print_ongoing_status = True,
+                 ca_needle = 0):
         """        
         :param needle: The needle to be found in the haystack. Default is None.
         :param haystack_dir: The directory of text files to use as background context (or a haystack) in which the needle is to be found. Default is Paul Graham Essays.
@@ -122,8 +124,11 @@ class LLMNeedleHaystackTester:
         """
         if not needle or not haystack_dir or not retrieval_question:
             raise ValueError("Needle, haystack, and retrieval_question must be provided.")
+                
+        if ca_needle == 0: self.needle = needle
+        elif ca_needle == 1: self.needle = ca_needle1
+        elif ca_needle == 2: self.needle = ca_needle2
         
-        self.needle = needle
         self.haystack_dir = haystack_dir
         self.retrieval_question = retrieval_question
         self.results_version = results_version
@@ -189,7 +194,6 @@ class LLMNeedleHaystackTester:
         self.debug='debug'
         model_name = model_name.split('/')[-1]
         self.needle_tok = self.enc(self.needle, return_tensors="pt").input_ids[0][2:].tolist()
-
 
     def logistic(self, x, L=100, x0=50, k=.1):
         if x == 0:
@@ -505,6 +509,7 @@ class LLMNeedleHaystackTester:
 if __name__ == "__main__":
     # Tons of defaults set, check out the LLMNeedleHaystackTester's init for more info
     parser = argparse.ArgumentParser()
+    parser.add_argument('-n', '--ca_needle', metavar='N', type=int, help='a number')
     parser.add_argument('-s', '--s_len', metavar='N', type=int, help='a number')
     parser.add_argument('-e', '--e_len', metavar='N', type=int, help='a number')
     parser.add_argument('--model_path', type=str, default=None, help='path to model')
@@ -527,7 +532,7 @@ if __name__ == "__main__":
                                  model_provider=args.model_provider,
                                  save_contexts=True,
                                  save_results=True,
-                                 openai_api_key=args.api_key
-                                 )
+                                 openai_api_key=args.api_key,
+                                 ca_needle=args.ca_needle)
 
     ht.start_test(args)
