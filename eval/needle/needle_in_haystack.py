@@ -110,12 +110,10 @@ class LLMNeedleHaystackTester:
             ValueError: [description]
         """
     
-        self.needle = all_needles[ca_needle]
-        self.shortcut_key = shortcut_keys[insert_short_key_id]
-        log_c(self.needle['value'])
-        log_c(self.shortcut_key['value'])
-
-
+        self.needle = all_needles[ca_needle]['value']
+        self.shortcut_key = shortcut_keys[insert_short_key_id]['value']
+        log_c(all_needles[ca_needle]['tag'])
+        log_c(shortcut_keys[insert_short_key_id]['tag'])
 
         self.haystack_dir = haystack_dir
         self.retrieval_question = retrieval_question
@@ -161,12 +159,8 @@ class LLMNeedleHaystackTester:
 
         if(self.model_provider not in ["OpenAI", "Anthropic"]):
             self.enc = AutoTokenizer.from_pretrained(model_name)
-            print("loading from %s" % model_name)
-
-            self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name,
-                                                                use_flash_attention_2="flash_attention_2", 
-                                                                torch_dtype=torch.bfloat16,
-                                                                ).eval()
+            log_c("loading from %s" % model_name)
+            self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
             scaling_factor = 10 # hardcode
             reset_rope(self.model_to_test, model_max_train_len=81920, scaling_factor=scaling_factor)
             self.model_to_test = tp.tensor_parallel(self.model_to_test, sharded=True)
@@ -178,17 +172,15 @@ class LLMNeedleHaystackTester:
                 self.enc = Anthropic().get_tokenizer()
 
         self.model_to_test_description = model_name
-        
         self.evaluation_model = None
-        self.debug='debug'
         model_name = model_name.split('/')[-1]
-        self.needle_tok = self.enc(self.needle, return_tensors="pt").input_ids[0][2:].tolist()
+        import pdb; pdb.set_trace()
+        self.needle_tok = self.enc(self.needle)
+        self.shortcut_key_tok = self.enc(self.shortcut_key) if len(self.shortcut_key) > 0 else None
 
     def logistic(self, x, L=100, x0=50, k=.1):
-        if x == 0:
-            return 0
-        if x == 100:
-            return 100
+        if x == 0: return 0
+        if x == 100: return 100
         return np.round(L / (1 + np.exp(-k * (x - x0))), 3)
     
     def bound_evaluate_and_log(self, *args):
@@ -366,16 +358,9 @@ class LLMNeedleHaystackTester:
 
     def generate_context(self, context_length, depth_percent):
         # Load up tiktoken so we navigate tokens more easily
-
-        # Get your Paul Graham files loaded into a string
-        context = self.read_context_files()
-
-        # Truncate the Paul Graham essays to the context length you desire
-        context = self.encode_and_trim(context, context_length)
-
-        # Insert your random statement according to your depth percent
-        context = self.insert_needle(context, depth_percent, context_length)
-
+        context = self.read_context_files() # Get your Paul Graham files loaded into a string
+        context = self.encode_and_trim(context, context_length) # Truncate the Paul Graham essays to the context length you desire
+        context = self.insert_needle(context, depth_percent, context_length) # Insert your random statement according to your depth percent``
         return context
     
     def encode_text_to_tokens(self, text):
@@ -394,13 +379,26 @@ class LLMNeedleHaystackTester:
         # Reducing the context length by 150 buffer. This is to account for system message, the user question, and response.
         context_length -= self.final_context_length_buffer
 
-        # If your context + needle are longer than the context length (which it will be), then reduce tokens from the context by the needle length
-        if len(tokens_context) + len(tokens_needle) > context_length:
-            tokens_context = tokens_context[:context_length - len(tokens_needle)]
+        # If your context + needle + shortcut keys are longer than the context length (which it will be), then reduce tokens from the context by the needle length
+        if len(tokens_context) + len(tokens_needle) + len(self.shortcut_key_tok) > context_length:
+            tokens_context = tokens_context[:context_length - len(tokens_needle) - len(self.shortcut_key_tok)]
+
+        # We want to make sure that we place our needle at a sentence break so we first see what token a '.' is
+        if(self.model_provider in ["LLaMA", "LongLLaMA"]): period_tokens = [29889, 869]
+        elif(self.model_provider == "Mistral"): period_tokens = [842, 28723]
+        elif(self.model_provider == "GLM"): period_tokens = [918, 30930]
+        else: period_tokens = self.encode_text_to_tokens('.')
 
         if depth_percent == 100:
             # If your depth percent is 100 (which means your needle is the last thing in the doc), throw it at the end
-            tokens_new_context = tokens_context + tokens_needle
+            shortcut_key_position = random.randint(self.final_context_length_buffer, len(tokens_context))
+            tokens_new_context = tokens_context[:shortcut_key_position]
+            
+            while tokens_new_context and tokens_new_context[-1] not in period_tokens:  # 此时只能在前半段插入shortcut key
+                shortcut_key_position += 1
+                tokens_new_context = tokens_context[:shortcut_key_position]
+            tokens_new_context += self.shortcut_key_tok + tokens_context[shortcut_key_position:] + tokens_needle
+            
         else:
             # Go get the position (in terms of tokens) to insert your needle
             insertion_point = int(len(tokens_context) * (depth_percent / 100))
@@ -408,12 +406,6 @@ class LLMNeedleHaystackTester:
             # tokens_new_context represents the tokens before the needle
             tokens_new_context = tokens_context[:insertion_point]
 
-            # We want to make sure that we place our needle at a sentence break so we first see what token a '.' is
-            if(self.model_provider in ["LLaMA", "LongLLaMA"]): period_tokens = [29889, 869]
-            elif(self.model_provider == "Mistral"): period_tokens = [842, 28723]
-            elif(self.model_provider == "GLM"): period_tokens = [918, 30930]
-            else: period_tokens = self.encode_text_to_tokens('.')
-            
             # Then we iteration backwards until we find the first period
             while tokens_new_context and tokens_new_context[-1] not in period_tokens:
                 insertion_point -= 1
