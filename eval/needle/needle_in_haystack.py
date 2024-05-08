@@ -67,13 +67,12 @@ def reset_rope(model, model_max_train_len, scaling_factor):
 
 class LLMNeedleHaystackTester:
 
-    def __init__(self, haystack_dir="PaulGrahamEssays", results_version = 1, context_lengths_min = 1000, context_lengths_max = 128000, context_lengths_num_intervals = 40,
-                 context_lengths = None, document_depth_percent_min = 0, document_depth_percent_max = 100, insert_short_key_id = 0,
-                 document_depth_percent_intervals = 10, document_depth_percents = None, document_depth_percent_interval_type = "linear",
-                 model_provider = "OpenAI", openai_api_key=None, anthropic_api_key = None, model_name='', model_name_suffix=None,
-                 num_concurrent_requests = 1, save_results = True, save_contexts = True, final_context_length_buffer = 200,
-                 seconds_to_sleep_between_completions = None, print_ongoing_status = True, ca_needle = 0, template_idx = 0, 
-                 shortcut_position=0, tensor_parallel=True):
+    def __init__(self, haystack_dir="PaulGrahamEssays", results_version = 1, context_lengths_min = 1000, context_lengths_max = 128000, 
+                 context_lengths_num_intervals = 40, context_lengths = None, document_depth_percent_min = 0, document_depth_percent_max = 100, 
+                 insert_short_key_id = 0, document_depth_percent_intervals = 10, document_depth_percents = None, anthropic_api_key = None, 
+                 document_depth_percent_interval_type = "linear", model_provider = "OpenAI", openai_api_key=None, model_name='', 
+                 model_name_suffix=None, num_concurrent_requests = 1, save_results = True, save_contexts = True, final_context_length_buffer = 200, 
+                 seconds_to_sleep_between_completions = None, print_ongoing_status = True, ca_needle = 1, template_idx = 0, shortcut_position=0, tensor_parallel=True):
         """Functions
 
         Args:
@@ -101,7 +100,7 @@ class LLMNeedleHaystackTester:
             final_context_length_buffer (int, optional): [description]. Defaults to 200.
             seconds_to_sleep_between_completions ([type], optional): [description]. Defaults to None.
             print_ongoing_status (bool, optional): [description]. Defaults to True.
-            ca_needle (int, optional): [description]. Defaults to 0.
+            ca_needle (int, optional): [description]. Defaults to 1.
             template_idx (int, optional): [description]. Defaults to 0.
             shortcut_position (int, optional): 插入shortcut的位置，是一个相对位置，0表示插在needle前面，1表示后面. Defaults to 0.
 
@@ -111,13 +110,13 @@ class LLMNeedleHaystackTester:
             ValueError: [description]
         """
     
-        self.needle = all_needles[ca_needle]['value']
+        self.needle = all_needles[ca_needle-1]['value']
         self.shortcut_key = shortcut_keys[insert_short_key_id]['value']
-        log_c(all_needles[ca_needle]['tag'])
+        log_c(all_needles[ca_needle-1]['tag'])
         log_c(shortcut_keys[insert_short_key_id]['tag'])
         
         self.haystack_dir = haystack_dir
-        self.retrieval_question = all_needles[ca_needle]['retrieval_question']
+        self.retrieval_question = all_needles[ca_needle-1]['retrieval_question']
         self.results_version = results_version
         self.num_concurrent_requests = num_concurrent_requests
         self.save_results = save_results
@@ -175,7 +174,6 @@ class LLMNeedleHaystackTester:
             raise ValueError("document_depth_percent_interval_type must be either None, 'linear' or 'sigmoid'. If you'd like your own distribution give a list of ints in via document_depth_percent_intervals")
         
         self.model_name = model_name
-
         self.model_to_test_description = model_name
         self.evaluation_model = None
         model_name = model_name.split('/')[-1]
@@ -262,6 +260,7 @@ class LLMNeedleHaystackTester:
             'version' : self.results_version,
             'retrieval_question': self.retrieval_question,
             'needle' : self.needle,
+            'shortcut_key' : self.shortcut_key if self.shortcut_key is not None else "",
             'model_response' : response,
             'score' : score,
             'test_duration_seconds' : test_elapsed_time,
