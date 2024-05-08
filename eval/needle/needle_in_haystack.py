@@ -67,8 +67,7 @@ def reset_rope(model, model_max_train_len, scaling_factor):
 
 class LLMNeedleHaystackTester:
 
-    def __init__(self, haystack_dir="PaulGrahamEssays", retrieval_question="What is the best thing to do in San Francisco?", 
-                 results_version = 1, context_lengths_min = 1000, context_lengths_max = 128000, context_lengths_num_intervals = 40,
+    def __init__(self, haystack_dir="PaulGrahamEssays", results_version = 1, context_lengths_min = 1000, context_lengths_max = 128000, context_lengths_num_intervals = 40,
                  context_lengths = None, document_depth_percent_min = 0, document_depth_percent_max = 100, insert_short_key_id = 0,
                  document_depth_percent_intervals = 10, document_depth_percents = None, document_depth_percent_interval_type = "linear",
                  model_provider = "OpenAI", openai_api_key=None, anthropic_api_key = None, model_name='', model_name_suffix=None,
@@ -118,7 +117,7 @@ class LLMNeedleHaystackTester:
         log_c(shortcut_keys[insert_short_key_id]['tag'])
         
         self.haystack_dir = haystack_dir
-        self.retrieval_question = retrieval_question
+        self.retrieval_question = all_needles[ca_needle]['retrieval_question']
         self.results_version = results_version
         self.num_concurrent_requests = num_concurrent_requests
         self.save_results = save_results
@@ -196,7 +195,7 @@ class LLMNeedleHaystackTester:
             for depth_percent in self.document_depth_percents:
                 task = self.bound_evaluate_and_log(context_length, depth_percent)
 
-    def generate_prompt(self, context):
+    def generate_prompt(self, context, question):
         # Generate the prompt for the Anthropic model
         # Replace the following line with the appropriate prompt structure
         if(self.model_provider not in ["OpenAI", "Anthropic"]):
@@ -206,25 +205,7 @@ class LLMNeedleHaystackTester:
             test_format2=f"{test_format_prefix}{context} </book>.\n Based on the content of the book, Question: {self.retrieval_question}\nAnswer:"
             return (test_format1, test_format_prefix_len) if self.template_idx == 1 else (test_format2, test_format_prefix_len)
         else: 
-            return [
-                {
-                    "role": "system",
-                    "content": "You are a helpful AI bot that answers questions for a user. Keep your response short and direct"
-                },
-                {
-                    "role": "user",
-                    "content": context
-                    },
-                {
-                    "role": "user",
-                    "content": f"{self.retrieval_question} Don't give information outside the document or repeat your findings. The document definitely contains the answer, and I'm 100% sure. So try your best to find it."
-                },
-                {
-                    "role": "assistant",
-                    "content":"",
-                },
-                
-            ]
+            return [{"role": "system","content": "You are a helpful AI bot that answers questions for a user. Keep your response short and direct"},{"role": "user","content": context},{"role": "user","content": f"{self.retrieval_question} Don't give information outside the document or repeat your findings. The document definitely contains the answer, and I'm 100% sure. So try your best to find it."},{"role": "assistant","content":""}]
 
     def evaluate_and_log(self, context_length, depth_percent):
         # Checks to see if you've already checked a length/percent/version.
@@ -250,12 +231,10 @@ class LLMNeedleHaystackTester:
             input_ids = prompt['input_ids'].to(self.model_to_test.device)
             with torch.no_grad():
                 outputs = self.model_to_test(input_ids)
-                # need to find the key (因为有额外的空格和<s>所以没法直接累加定位)
+                # need to find the key
                 insert_st, insert_end = insert_meta_data["insert_point_bt"], insert_meta_data["insert_point_ed"]
                 # add the prompt length
-                st, end = self.find_sublist(self.needle_tok, input_ids)
-                if (st == insert_st + test_format_prefix_len) and (end == insert_end + test_format_prefix_len):
-                    print(f"position mismatch: test_format_prefix_len={test_format_prefix_len}, st={st}, insert_st={insert_st}, end={end}, insert_end={insert_end}")
+                st, end = insert_st + test_format_prefix_len, insert_end + test_format_prefix_len
                 length = end - st + 1
                 exp_st, exp_end = max(1, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
@@ -362,7 +341,10 @@ class LLMNeedleHaystackTester:
     def generate_context(self, context_length, depth_percent): # Load up tiktoken so we navigate tokens more easily
         context = self.read_context_files() # Get your Paul Graham files loaded into a string
         context = self.encode_and_trim(context, context_length) # Truncate the Paul Graham essays to the context length you desire
-        context, insert_meta_data = self.insert_needle(context, depth_percent, context_length) # Insert your random statement according to your depth percent``
+        if self.shortcut_key_tok is not None:
+            context, insert_meta_data = self.insert_needle_shortcut(context, depth_percent, context_length) 
+        else: 
+            context, insert_meta_data = self.insert_needle(context, depth_percent, context_length) 
         return context, insert_meta_data
     
     def encode_text_to_tokens(self, text):
@@ -374,8 +356,49 @@ class LLMNeedleHaystackTester:
         else:
             raise ValueError("model_provider must be either 'OpenAI' or 'Anthropic'")
     
-    def insert_needle(self, context, depth_percent, context_length):
-        # tokens_needle = self.encode_text_to_tokens(self.needle)
+
+    def insert_needle(self, context, depth_percent, context_length):  # just insert needle
+        tokens_needle = self.needle_tok
+        tokens_context = self.encode_text_to_tokens(context)
+
+        # Reducing the context length by 150 buffer. This is to account for system message, the user question, and response.
+        context_length -= self.final_context_length_buffer
+
+        # If your context + needle + shortcut keys are longer than the context length (which it will be), then reduce tokens from the context by the needle length
+        if len(tokens_context) + len(tokens_needle) > context_length:
+            tokens_context = tokens_context[:context_length - len(tokens_needle)]
+
+        # We want to make sure that we place our needle at a sentence break so we first see what token a '.' is
+        if(self.model_provider in ["LLaMA", "LongLLaMA"]): period_tokens = [29889, 869]
+        elif(self.model_provider == "Mistral"): period_tokens = [842, 28723]
+        elif(self.model_provider == "GLM"): period_tokens = [918, 30930]
+        else: period_tokens = self.encode_text_to_tokens('.')
+
+        if depth_percent == 100:
+            tokens_new_context = tokens_context + tokens_needle
+            insertion_point = len(tokens_new_context) - len(tokens_needle)
+        else:
+            # Go get the position (in terms of tokens) to insert your needle
+            insertion_point = int(len(tokens_context) * (depth_percent / 100))
+
+            # tokens_new_context represents the tokens before the needle
+            tokens_new_context = tokens_context[:insertion_point]
+
+            # Then we iteration backwards until we find the first period
+            while tokens_new_context and tokens_new_context[-1] not in period_tokens:
+                insertion_point -= 1
+                tokens_new_context = tokens_context[:insertion_point]
+
+            print("insertion at %d" % insertion_point)
+        
+            tokens_new_context += tokens_needle + tokens_context[insertion_point:]
+
+        # Convert back to a string and return it
+        new_context = self.decode_tokens(tokens_new_context)
+        return new_context, {"shortcut_key_pos_bt": 0, "shortcut_key_pos_ed": 0, "insert_point_bt": insertion_point, "insert_point_ed": insertion_point+len(tokens_needle)}
+
+
+    def insert_needle_shortcut(self, context, depth_percent, context_length):  # insert both shortcut and needle
         tokens_needle = self.needle_tok
         tokens_context = self.encode_text_to_tokens(context)
 
