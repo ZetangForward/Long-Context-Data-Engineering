@@ -137,7 +137,7 @@ class LLMNeedleHaystackTester:
             self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
             scaling_factor = 10 # hardcode
             reset_rope(self.model_to_test, model_max_train_len=81920, scaling_factor=scaling_factor)
-            self.model_to_test = tp.tensor_parallel(self.model_to_test, sharded=True) if tensor_parallel else self.model_to_test
+            self.model_to_test = tp.tensor_parallel(self.model_to_test, sharded=True) if tensor_parallel else self.model_to_test.cuda()
         else: 
             self.model_to_test = OpenAI(api_key=openai_api_key)
             if(self.model_provider == "OpenAI"):
@@ -434,11 +434,11 @@ class LLMNeedleHaystackTester:
             if self.shortcut_position == 0: # insert in the left, shift to left position 
                 while suffix and suffix[0] not in period_tokens:  # insert shortcut key before a whole sequence
                     shortcut_key_position -= 1 
-                    prefix, suffix = prefix[:shortcut_key_position], suffix[shortcut_key_position:]
+                    prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
             else: # insert in the right, shift to right position  
                 while suffix and prefix[-1] not in period_tokens:  
                     shortcut_key_position += 1 
-                    prefix, suffix = prefix[:shortcut_key_position], suffix[shortcut_key_position:]
+                    prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
             tokens_new_context = prefix + self.shortcut_key_tok + suffix
 
         # Convert back to a string and return it
