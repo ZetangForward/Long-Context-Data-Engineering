@@ -137,7 +137,7 @@ class LLMNeedleHaystackTester:
             self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
             scaling_factor = 10 # hardcode
             reset_rope(self.model_to_test, model_max_train_len=81920, scaling_factor=scaling_factor)
-            self.model_to_test = tp.tensor_parallel(self.model_to_test, sharded=True) if tensor_parallel else self.model_to_test.cuda()
+            self.model_to_test = tp.tensor_parallel(self.model_to_test, sharded=True) if tensor_parallel else self.model_to_test
         else: 
             self.model_to_test = OpenAI(api_key=openai_api_key)
             if(self.model_provider == "OpenAI"):
@@ -249,12 +249,12 @@ class LLMNeedleHaystackTester:
             prompt = self.enc(prompt, return_tensors="pt")
             input_ids = prompt['input_ids'].to(self.model_to_test.device)
             with torch.no_grad():
+                import pdb; pdb.set_trace()
                 outputs = self.model_to_test(input_ids)
                 # need to find the key (因为有额外的空格和<s>所以没法直接累加定位)
                 # insert_st, insert_end = insert_meta_data["insert_point_bt"], insert_meta_data["insert_point_ed"]
                 # add the prompt length
                 st, end = self.find_sublist(self.needle_tok, input_ids)
-                import pdb; pdb.set_trace()
                 length = end - st + 1
                 exp_st, exp_end = max(1, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
@@ -438,6 +438,7 @@ class LLMNeedleHaystackTester:
                 while suffix and prefix[-1] not in period_tokens:  
                     shortcut_key_position += 1 
                     prefix, suffix = prefix[:shortcut_key_position], suffix[shortcut_key_position:]
+            import pdb; pdb.set_trace()
             tokens_new_context = prefix + self.shortcut_key_tok + suffix
 
         # Convert back to a string and return it
