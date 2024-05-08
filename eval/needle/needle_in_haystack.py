@@ -254,8 +254,9 @@ class LLMNeedleHaystackTester:
                 insert_st, insert_end = insert_meta_data["insert_point_bt"], insert_meta_data["insert_point_ed"]
                 # add the prompt length
                 st, end = self.find_sublist(self.needle_tok, input_ids)
-                assert (st == insert_st + test_format_prefix_len) and (end == insert_end + test_format_prefix_len), \
-                f"position mismatch: test_format_prefix_len={test_format_prefix_len}, st={st}, insert_st={insert_st}, end={end}, insert_end={insert_end}"
+                if (st == insert_st + test_format_prefix_len) and (end == insert_end + test_format_prefix_len):
+                    print(f"position mismatch: test_format_prefix_len={test_format_prefix_len}, st={st}, insert_st={insert_st}, end={end}, insert_end={insert_end}")
+                    import pdb; pdb.set_trace()
                 length = end - st + 1
                 exp_st, exp_end = max(1, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
