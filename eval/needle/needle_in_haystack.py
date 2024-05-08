@@ -73,7 +73,8 @@ class LLMNeedleHaystackTester:
                  document_depth_percent_intervals = 10, document_depth_percents = None, document_depth_percent_interval_type = "linear",
                  model_provider = "OpenAI", openai_api_key=None, anthropic_api_key = None, model_name='', model_name_suffix=None,
                  num_concurrent_requests = 1, save_results = True, save_contexts = True, final_context_length_buffer = 200,
-                 seconds_to_sleep_between_completions = None, print_ongoing_status = True, ca_needle = 0, template_idx = 0):
+                 seconds_to_sleep_between_completions = None, print_ongoing_status = True, ca_needle = 0, template_idx = 0, 
+                 shortcut_position=0):
         """Functions
 
         Args:
@@ -103,6 +104,7 @@ class LLMNeedleHaystackTester:
             print_ongoing_status (bool, optional): [description]. Defaults to True.
             ca_needle (int, optional): [description]. Defaults to 0.
             template_idx (int, optional): [description]. Defaults to 0.
+            shortcut_position (int, optional): 插入shortcut的位置，是一个相对位置，0表示插在needle前面，1表示后面. Defaults to 0.
 
         Raises:
             ValueError: [description]
@@ -114,7 +116,7 @@ class LLMNeedleHaystackTester:
         self.shortcut_key = shortcut_keys[insert_short_key_id]['value']
         log_c(all_needles[ca_needle]['tag'])
         log_c(shortcut_keys[insert_short_key_id]['tag'])
-
+        
         self.haystack_dir = haystack_dir
         self.retrieval_question = retrieval_question
         self.results_version = results_version
@@ -126,7 +128,25 @@ class LLMNeedleHaystackTester:
         self.print_ongoing_status = print_ongoing_status
         self.model_provider = model_provider
         self.template_idx = template_idx
+        self.shortcut_position = shortcut_position
         self.testing_results = []
+
+        if(self.model_provider not in ["OpenAI", "Anthropic"]):
+            self.enc = AutoTokenizer.from_pretrained(model_name)
+            log_c("loading from %s" % model_name)
+            self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
+            scaling_factor = 10 # hardcode
+            reset_rope(self.model_to_test, model_max_train_len=81920, scaling_factor=scaling_factor)
+            self.model_to_test = tp.tensor_parallel(self.model_to_test, sharded=True)
+        else: 
+            self.model_to_test = OpenAI(api_key=openai_api_key)
+            if(self.model_provider == "OpenAI"):
+                self.enc = tiktoken.encoding_for_model(self.model_name)
+            elif(self.model_provider == "Anthropic"):
+                self.enc = Anthropic().get_tokenizer()
+        
+        self.needle_tok = self.enc(self.needle).input_ids[1:]
+        self.shortcut_key_tok = self.enc(self.shortcut_key) if len(self.shortcut_key) > 0 else None
 
         if("/" in model_name):
             self.model_version = model_name.split("/")[-1]
@@ -157,27 +177,10 @@ class LLMNeedleHaystackTester:
         
         self.model_name = model_name
 
-        if(self.model_provider not in ["OpenAI", "Anthropic"]):
-            self.enc = AutoTokenizer.from_pretrained(model_name)
-            log_c("loading from %s" % model_name)
-            self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
-            scaling_factor = 10 # hardcode
-            reset_rope(self.model_to_test, model_max_train_len=81920, scaling_factor=scaling_factor)
-            self.model_to_test = tp.tensor_parallel(self.model_to_test, sharded=True)
-        else: 
-            self.model_to_test = OpenAI(api_key=openai_api_key)
-            if(self.model_provider == "OpenAI"):
-                self.enc = tiktoken.encoding_for_model(self.model_name)
-            elif(self.model_provider == "Anthropic"):
-                self.enc = Anthropic().get_tokenizer()
-
         self.model_to_test_description = model_name
         self.evaluation_model = None
         model_name = model_name.split('/')[-1]
-        import pdb; pdb.set_trace()
-        self.needle_tok = self.enc(self.needle)
-        self.shortcut_key_tok = self.enc(self.shortcut_key) if len(self.shortcut_key) > 0 else None
-
+        
     def logistic(self, x, L=100, x0=50, k=.1):
         if x == 0: return 0
         if x == 100: return 100
@@ -232,7 +235,7 @@ class LLMNeedleHaystackTester:
                 print("result does not exist, testing")
 
         # Go generate the required length context and place your needle statement in
-        context = self.generate_context(context_length, depth_percent)
+        context, insert_meta_data = self.generate_context(context_length, depth_percent)
 
         # Prepare your message to send to the model you're going to evaluate
         prompt = self.generate_prompt(context)
@@ -251,7 +254,7 @@ class LLMNeedleHaystackTester:
             input_ids = prompt['input_ids'].to(self.model_to_test.device)
             with torch.no_grad():
                 outputs = self.model_to_test(input_ids)
-                st, end = self.find_sublist(self.needle_tok, input_ids)
+                st, end = insert_meta_data["insert_point_bt"], insert_meta_data["insert_point_ed"]
                 length = end - st + 1
                 exp_st, exp_end = max(1, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
@@ -285,9 +288,9 @@ class LLMNeedleHaystackTester:
             'test_timestamp_utc' : datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S%z'),
             'ppls': [prefix_ppl, needle_ppl, suffix_ppl],
             "shift_st": shift_st, 
-            "shift_end": shift_end
+            "shift_end": shift_end,
         }
-
+        results.update(insert_meta_data)
         self.testing_results.append(results)
 
         if self.print_ongoing_status:
@@ -360,8 +363,8 @@ class LLMNeedleHaystackTester:
         # Load up tiktoken so we navigate tokens more easily
         context = self.read_context_files() # Get your Paul Graham files loaded into a string
         context = self.encode_and_trim(context, context_length) # Truncate the Paul Graham essays to the context length you desire
-        context = self.insert_needle(context, depth_percent, context_length) # Insert your random statement according to your depth percent``
-        return context
+        context, insert_meta_data = self.insert_needle(context, depth_percent, context_length) # Insert your random statement according to your depth percent``
+        return context, insert_meta_data
     
     def encode_text_to_tokens(self, text):
         if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
@@ -390,16 +393,17 @@ class LLMNeedleHaystackTester:
         else: period_tokens = self.encode_text_to_tokens('.')
 
         if depth_percent == 100:
+            import pdb; pdb.set_trace()
             # If your depth percent is 100 (which means your needle is the last thing in the doc), throw it at the end
-            shortcut_key_position = random.randint(self.final_context_length_buffer, len(tokens_context))
+            shortcut_key_position = random.randint(self.final_context_length_buffer, len(tokens_context) - 1)
             tokens_new_context = tokens_context[:shortcut_key_position]
-            
-            while tokens_new_context and tokens_new_context[-1] not in period_tokens:  # 此时只能在前半段插入shortcut key
-                shortcut_key_position += 1
+            # insert shortcut key in random position, before a whole sequence
+            while tokens_new_context and tokens_new_context[-1] not in period_tokens:  
+                shortcut_key_position -= 1
                 tokens_new_context = tokens_context[:shortcut_key_position]
             tokens_new_context += self.shortcut_key_tok + tokens_context[shortcut_key_position:] + tokens_needle
-            
         else:
+            import pdb; pdb.set_trace()
             # Go get the position (in terms of tokens) to insert your needle
             insertion_point = int(len(tokens_context) * (depth_percent / 100))
 
@@ -412,13 +416,32 @@ class LLMNeedleHaystackTester:
                 tokens_new_context = tokens_context[:insertion_point]
 
             print("insertion at %d" % insertion_point)
-            # Once we get there, then add in your needle, and stick the rest of your context in on the other end.
-            # Now we have a needle in a haystack
+        
             tokens_new_context += tokens_needle + tokens_context[insertion_point:]
+
+            if self.shortcut_position == 0: 
+                short_pos_bt, short_pos_ed = self.final_context_length_buffer, insertion_point
+            elif self.shortcut_position == 1: 
+                short_pos_bt, short_pos_ed = insertion_point + len(tokens_needle), len(tokens_new_context) - 1
+
+            # Insert Shortcut squence
+            shortcut_key_position = random.randint(short_pos_bt, short_pos_ed)
+            prefix, suffix = tokens_new_context, tokens_new_context
+
+            if self.shortcut_position == 0: # insert in the left
+                while prefix and prefix[-1] not in period_tokens:  # insert shortcut key before a whole sequence
+                    shortcut_key_position -= 1 
+                    prefix, suffix = prefix[:shortcut_key_position], suffix[shortcut_key_position:]
+                tokens_new_context = prefix + self.shortcut_key_tok + suffix
+            else: # insert in the right    
+                while suffix and suffix[0] not in period_tokens:
+                    shortcut_key_position += 1 
+                    prefix, suffix = prefix[:shortcut_key_position], suffix[shortcut_key_position:]
+                tokens_new_context = prefix + self.shortcut_key_tok + suffix
 
         # Convert back to a string and return it
         new_context = self.decode_tokens(tokens_new_context)
-        return new_context
+        return new_context, {"shortcut_key_position": shortcut_key_position, "insert_point_bt": insertion_point, "insert_point_ed": insertion_point+len(tokens_needle)}
 
     def get_context_length_in_tokens(self, context):
         if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
