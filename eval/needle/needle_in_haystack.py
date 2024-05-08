@@ -201,7 +201,7 @@ class LLMNeedleHaystackTester:
         # Replace the following line with the appropriate prompt structure
         if(self.model_provider not in ["OpenAI", "Anthropic"]):
             test_format_prefix = "<|im_start|> This is a very long story book: <book> "
-            test_format_prefix_len = len(self.enc(test_format_prefix).input_ids)
+            test_format_prefix_len = len(self.enc(test_format_prefix).input_ids) - 1  # skip the <s> token
             test_format1=f"{test_format_prefix}{context} </book>.\n Based on the content of the book, Question: {self.retrieval_question}\nAnswer: The best thing to do in San Francisco is"
             test_format2=f"{test_format_prefix}{context} </book>.\n Based on the content of the book, Question: {self.retrieval_question}\nAnswer:"
             return (test_format1, test_format_prefix_len) if self.template_idx == 1 else (test_format2, test_format_prefix_len)
@@ -249,12 +249,13 @@ class LLMNeedleHaystackTester:
             prompt = self.enc(prompt, return_tensors="pt")
             input_ids = prompt['input_ids'].to(self.model_to_test.device)
             with torch.no_grad():
-                import pdb; pdb.set_trace()
                 outputs = self.model_to_test(input_ids)
                 # need to find the key (因为有额外的空格和<s>所以没法直接累加定位)
-                # insert_st, insert_end = insert_meta_data["insert_point_bt"], insert_meta_data["insert_point_ed"]
+                insert_st, insert_end = insert_meta_data["insert_point_bt"], insert_meta_data["insert_point_ed"]
                 # add the prompt length
                 st, end = self.find_sublist(self.needle_tok, input_ids)
+                assert (st == insert_st + test_format_prefix_len) and (end == insert_end + test_format_prefix_len), \
+                f"position mismatch: test_format_prefix_len={test_format_prefix_len}, st={st}, insert_st={insert_st}, end={end}, insert_end={insert_end}"
                 length = end - st + 1
                 exp_st, exp_end = max(1, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
@@ -438,7 +439,6 @@ class LLMNeedleHaystackTester:
                 while suffix and prefix[-1] not in period_tokens:  
                     shortcut_key_position += 1 
                     prefix, suffix = prefix[:shortcut_key_position], suffix[shortcut_key_position:]
-            import pdb; pdb.set_trace()
             tokens_new_context = prefix + self.shortcut_key_tok + suffix
 
         # Convert back to a string and return it
