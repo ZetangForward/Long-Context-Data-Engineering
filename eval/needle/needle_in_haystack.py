@@ -256,7 +256,6 @@ class LLMNeedleHaystackTester:
                 st, end = self.find_sublist(self.needle_tok, input_ids)
                 if (st == insert_st + test_format_prefix_len) and (end == insert_end + test_format_prefix_len):
                     print(f"position mismatch: test_format_prefix_len={test_format_prefix_len}, st={st}, insert_st={insert_st}, end={end}, insert_end={insert_end}")
-                    import pdb; pdb.set_trace()
                 length = end - st + 1
                 exp_st, exp_end = max(1, st - length), min(input_ids.size(-1), end + length) # expend st and end value to view wider positions
                 shift_st, shift_end = st - exp_st, exp_end - end
@@ -394,7 +393,6 @@ class LLMNeedleHaystackTester:
         else: period_tokens = self.encode_text_to_tokens('.')
 
         if depth_percent == 100:
-            import pdb; pdb.set_trace()
             # If your depth percent is 100 (which means your needle is the last thing in the doc), throw it at the end
             shortcut_key_position = random.randint(self.final_context_length_buffer, len(tokens_context) - 1)
             tokens_new_context = tokens_context[:shortcut_key_position]
@@ -402,7 +400,8 @@ class LLMNeedleHaystackTester:
             while tokens_new_context and tokens_new_context[-1] not in period_tokens:  
                 shortcut_key_position -= 1
                 tokens_new_context = tokens_context[:shortcut_key_position]
-            tokens_new_context += self.shortcut_key_tok + tokens_context[shortcut_key_position:] + tokens_needle
+            tokens_new_context += self.shortcut_key_tok + tokens_context[:shortcut_key_position] + tokens_needle
+            insertion_point = len(tokens_new_context) - len(tokens_needle)
         else:
             # Go get the position (in terms of tokens) to insert your needle
             insertion_point = int(len(tokens_context) * (depth_percent / 100))
