@@ -12,9 +12,7 @@ python -u needle_in_haystack.py --s_len 0 --e_len 128000\
 
 # LLaMA 2 32K. Remember to download the model first
 (
-python -u needle_in_haystack.py --s_len 0 --e_len 128000\
-    --model_provider LLaMA\
-    --model_path ../../../Llama-2-7B-32K-Instruct
+CUDA_VISIBLE_DEVICES=4,5 python -u needle_in_haystack.py --s_len 0 --e_len 64000 --model_provider LLaMA --model_path /vepfs/wcf/G/zecheng/hf_models/llama-2-7b-80k -n 6 -t 2 --model_name_suffix ctx_64000_n6t2
 ) 2>&1  | tee logs/eval_llama2_32k_instruct.log
 
 # LongChat. Remember to download the model first
@@ -52,6 +50,9 @@ from modelzipper.tutils import *
 
 scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
+all_needles = auto_read_data("needle.jsonl")
+shortcut_keys = auto_read_data("shortcut_key.jsonl")
+
 def reset_rope(model, model_max_train_len, scaling_factor):
     for l in model.model.layers:
         l.self_attn.rotary_emb.scaling_factor = scaling_factor
@@ -62,73 +63,60 @@ def reset_rope(model, model_max_train_len, scaling_factor):
 有哪些原因会导致捷径学习？
 1. 变化的PPL -> 导致head过分关注某些内容
 2. 训练数据泄露 -> 使用模型PPL大的sentence作为passkey还能检索出来吗
-
 """
 
 class LLMNeedleHaystackTester:
-    """
-    This class is used to test the LLM Needle Haystack.
-    """
-    def __init__(self,
-                 needle="\nThe best thing to do in San Francisco is eat a sandwich and sit in Dolores Park on a sunny day.\n",
-                 ca_needle1="\nThe best thing to do in San Francisco is to walk around the city.\n",
-                 ca_needle2="\nThe best thing to do in San Francisco is to walk around the city. It's a great way to see the sights and get some exercise at the same time.\n",
-                 haystack_dir="PaulGrahamEssays",
-                 retrieval_question="What is the best thing to do in San Francisco?",
-                 results_version = 1,
-                 context_lengths_min = 1000,
-                 context_lengths_max = 128000,
-                 context_lengths_num_intervals = 40,
-                 context_lengths = None,
-                 document_depth_percent_min = 0,
-                 document_depth_percent_max = 100,
-                 document_depth_percent_intervals = 10,
-                 document_depth_percents = None,
-                 document_depth_percent_interval_type = "linear",
-                 model_provider = "OpenAI",
-                 openai_api_key=None,
-                 anthropic_api_key = None,
-                 model_name='',
-                 model_name_suffix=None,
-                 num_concurrent_requests = 1,
-                 save_results = True,
-                 save_contexts = True,
-                 final_context_length_buffer = 200,
-                 seconds_to_sleep_between_completions = None,
-                 print_ongoing_status = True,
-                 ca_needle = 0):
-        """        
-        :param needle: The needle to be found in the haystack. Default is None.
-        :param haystack_dir: The directory of text files to use as background context (or a haystack) in which the needle is to be found. Default is Paul Graham Essays.
-        :param retrieval_question: The question which with to prompt the model to do the retrieval.
-        :param results_version: In case you would like to try the same combination of model, context length, and depth % multiple times, change the results version other than 1
-        :param num_concurrent_requests: Due to volume, this object is set up to run concurrent requests, default = 1. Be careful of rate limits.
-        :param save_results: Whether or not you would like to save your contexts to file. Warning: These will get long! Default = True
-        :param save_contexts: Whether or not you would like to save your contexts to file. Warning: These will get long! Default is True.
-        :param final_context_length_buffer: The amount of cushion you'd like to leave off the input context to allow for the output context. Default 200 tokens
-        :param context_lengths_min: The minimum length of the context. Default is 1000.
-        :param context_lengths_max: The maximum length of the context. Default is 200000.
-        :param context_lengths_num_intervals: The number of intervals for the context length. Default is 35.
-        :param context_lengths: The lengths of the context. Default is None.
-        :param document_depth_percent_min: The minimum depth percent of the document. Default is 0.
-        :param document_depth_percent_max: The maximum depth percent of the document. Default is 100.
-        :param document_depth_percent_intervals: The number of intervals for the document depth percent. Default is 35.
-        :param document_depth_percents: The depth percentages of the document. Default is None.
-        :param document_depth_percent_interval_type: The type of interval for the document depth percent. Must be either 'linear' or 'sigmoid'. Default is 'linear'.
-        :param model_provider: The provider of the model. Must be either 'OpenAI' or 'Anthropic'. Default is 'OpenAI'.
-        :param openai_api_key: The API key for OpenAI. Default is None.
-        :param anthropic_api_key: The API key for Anthropic. Default is None.
-        :param model_name: The name of the model. Default is 'gpt-4-1106-preview'.
-        :param seconds_to_sleep_between_completions: The number of seconds to sleep between completions. Default is None.
-        :param print_ongoing_status: Whether or not to print the ongoing status. Default is True.
+
+    def __init__(self, haystack_dir="PaulGrahamEssays", retrieval_question="What is the best thing to do in San Francisco?", 
+                 results_version = 1, context_lengths_min = 1000, context_lengths_max = 128000, context_lengths_num_intervals = 40,
+                 context_lengths = None, document_depth_percent_min = 0, document_depth_percent_max = 100, insert_short_key_id = 0,
+                 document_depth_percent_intervals = 10, document_depth_percents = None, document_depth_percent_interval_type = "linear",
+                 model_provider = "OpenAI", openai_api_key=None, anthropic_api_key = None, model_name='', model_name_suffix=None,
+                 num_concurrent_requests = 1, save_results = True, save_contexts = True, final_context_length_buffer = 200,
+                 seconds_to_sleep_between_completions = None, print_ongoing_status = True, ca_needle = 0, template_idx = 0):
+        """Functions
+
+        Args:
+            haystack_dir (str, optional): 实验地址路径. Defaults to "PaulGrahamEssays".
+            retrieval_question (str, optional): [description]. Defaults to "What is the best thing to do in San Francisco?".
+            results_version (int, optional): [description]. Defaults to 1.
+            context_lengths_min (int, optional): [description]. Defaults to 1000.
+            context_lengths_max (int, optional): [description]. Defaults to 128000.
+            context_lengths_num_intervals (int, optional): [description]. Defaults to 40.
+            context_lengths ([type], optional): [description]. Defaults to None.
+            document_depth_percent_min (int, optional): [description]. Defaults to 0.
+            document_depth_percent_max (int, optional): [description]. Defaults to 100.
+            insert_short_key_id (int, optional): 插入捷径key的index(0 表示插入一个空的字符串进去). Defaults to 0.
+            document_depth_percent_intervals (int, optional): [description]. Defaults to 10.
+            document_depth_percents ([type], optional): [description]. Defaults to None.
+            document_depth_percent_interval_type (str, optional): [description]. Defaults to "linear".
+            model_provider (str, optional): [description]. Defaults to "OpenAI".
+            openai_api_key ([type], optional): [description]. Defaults to None.
+            anthropic_api_key ([type], optional): [description]. Defaults to None.
+            model_name (str, optional): [description]. Defaults to ''.
+            model_name_suffix ([type], optional): [description]. Defaults to None.
+            num_concurrent_requests (int, optional): [description]. Defaults to 1.
+            save_results (bool, optional): [description]. Defaults to True.
+            save_contexts (bool, optional): [description]. Defaults to True.
+            final_context_length_buffer (int, optional): [description]. Defaults to 200.
+            seconds_to_sleep_between_completions ([type], optional): [description]. Defaults to None.
+            print_ongoing_status (bool, optional): [description]. Defaults to True.
+            ca_needle (int, optional): [description]. Defaults to 0.
+            template_idx (int, optional): [description]. Defaults to 0.
+
+        Raises:
+            ValueError: [description]
+            ValueError: [description]
+            ValueError: [description]
         """
-        if not needle or not haystack_dir or not retrieval_question:
-            raise ValueError("Needle, haystack, and retrieval_question must be provided.")
-                
-        if ca_needle == 0: self.needle = needle
-        elif ca_needle == 1: self.needle = ca_needle1
-        elif ca_needle == 2: self.needle = ca_needle2
-        
+    
+        self.needle = all_needles[ca_needle]
+        self.shortcut_key = shortcut_keys[insert_short_key_id]
+        log_c(self.needle['value'])
+        log_c(self.shortcut_key['value'])
+
+
+
         self.haystack_dir = haystack_dir
         self.retrieval_question = retrieval_question
         self.results_version = results_version
@@ -139,6 +127,7 @@ class LLMNeedleHaystackTester:
         self.seconds_to_sleep_between_completions = seconds_to_sleep_between_completions
         self.print_ongoing_status = print_ongoing_status
         self.model_provider = model_provider
+        self.template_idx = template_idx
         self.testing_results = []
 
         if("/" in model_name):
@@ -205,9 +194,7 @@ class LLMNeedleHaystackTester:
     def bound_evaluate_and_log(self, *args):
         self.evaluate_and_log(*args)
 
-    def run_test(self, args):
-
-        # Run through each iteration of context_lengths and depths
+    def run_test(self, args): # Run through each iteration of context_lengths and depths
         tasks = []
         for context_length in self.context_lengths:
             if context_length < args.s_len or context_length > args.e_len: continue
@@ -218,8 +205,9 @@ class LLMNeedleHaystackTester:
         # Generate the prompt for the Anthropic model
         # Replace the following line with the appropriate prompt structure
         if(self.model_provider not in ["OpenAI", "Anthropic"]):
-            test_format=f"<|im_start|> This is a very long story book: <book> {context} </book>.\n Based on the content of the book, Question: {self.retrieval_question}\nAnswer: The best thing to do in San Francisco is"
-            return test_format
+            test_format1=f"<|im_start|> This is a very long story book: <book> {context} </book>.\n Based on the content of the book, Question: {self.retrieval_question}\nAnswer: The best thing to do in San Francisco is"
+            test_format2=f"<|im_start|> This is a very long story book: <book> {context} </book>.\n Based on the content of the book, Question: {self.retrieval_question}\nAnswer:"
+            return test_format1 if self.template_idx == 1 else test_format2
         else: 
             return [
                 {
@@ -321,7 +309,7 @@ class LLMNeedleHaystackTester:
         context_file_location = f'{self.model_version.replace(".", "_")}_len_{context_length}_depth_{int(depth_percent*100)}'
 
         if self.save_contexts:
-            results['file_name'] : context_file_location
+            results['file_name'] = context_file_location
 
             # Save the context to file for retesting
             if not os.path.exists('contexts'):
@@ -353,7 +341,6 @@ class LLMNeedleHaystackTester:
             if bigger[i:i+len(sub)] == sub:
                 return i, i + len(sub)
         return None, None
-
 
     def result_exists(self, context_length, depth_percent):
         """
@@ -509,6 +496,7 @@ if __name__ == "__main__":
     # Tons of defaults set, check out the LLMNeedleHaystackTester's init for more info
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--ca_needle', metavar='N', type=int, help='a number')
+    parser.add_argument('-t', '--template_idx', metavar='N', type=int, help='a number')
     parser.add_argument('-s', '--s_len', metavar='N', type=int, help='a number')
     parser.add_argument('-e', '--e_len', metavar='N', type=int, help='a number')
     parser.add_argument('--model_path', type=str, default=None, help='path to model')
@@ -532,6 +520,7 @@ if __name__ == "__main__":
                                  save_contexts=True,
                                  save_results=True,
                                  openai_api_key=args.api_key,
-                                 ca_needle=args.ca_needle)
+                                 ca_needle=args.ca_needle,
+                                 template_idx=args.template_idx)
 
     ht.start_test(args)
