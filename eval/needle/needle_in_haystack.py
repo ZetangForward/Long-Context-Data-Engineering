@@ -12,7 +12,7 @@ python -u needle_in_haystack.py --s_len 0 --e_len 128000\
 
 # LLaMA 2 32K. Remember to download the model first
 (
-CUDA_VISIBLE_DEVICES=4,5 python -u needle_in_haystack.py --s_len 0 --e_len 64000 --model_provider LLaMA --model_path /vepfs/wcf/G/zecheng/hf_models/llama-2-7b-80k -n 6 -t 2 --insert_short_key_id 1 --model_name_suffix test --shortcut_position 0 -tp
+CUDA_VISIBLE_DEVICES=2 python -u needle_in_haystack.py --s_len 0 --e_len 64000 --model_provider LLaMA --model_path /vepfs/wcf/G/zecheng/hf_models/llama-2-7b-80k -n 6 -t 2 --insert_short_key_id 1 --model_name_suffix test --shortcut_position 0 -tp
 ) 2>&1  | tee logs/eval_llama2_32k_instruct.log
 
 # LongChat. Remember to download the model first
