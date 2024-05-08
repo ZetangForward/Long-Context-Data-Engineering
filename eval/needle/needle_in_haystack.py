@@ -429,20 +429,17 @@ class LLMNeedleHaystackTester:
 
             # Insert Shortcut squence
             shortcut_key_position = random.randint(short_pos_st, short_pos_ed)
-            import pdb; pdb.set_trace()
-            prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]  # default positions
+            prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
             if self.shortcut_position == 0: # insert in the left, shift to left position 
                 while suffix and suffix[0] not in period_tokens:  # insert shortcut key before a whole sequence
                     shortcut_key_position -= 1 
                     prefix, suffix = prefix[:shortcut_key_position], suffix[shortcut_key_position:]
-                tokens_new_context = prefix + self.shortcut_key_tok + suffix
             else: # insert in the right, shift to right position  
-                import pdb; pdb.set_trace()  
                 while suffix and prefix[-1] not in period_tokens:  
                     shortcut_key_position += 1 
                     prefix, suffix = prefix[:shortcut_key_position], suffix[shortcut_key_position:]
-                tokens_new_context = prefix + self.shortcut_key_tok + suffix
-        import pdb; pdb.set_trace()
+            tokens_new_context = prefix + self.shortcut_key_tok + suffix
+
         # Convert back to a string and return it
         new_context = self.decode_tokens(tokens_new_context)
         return new_context, {"shortcut_key_pos_bt": shortcut_key_position, "shortcut_key_pos_ed": shortcut_key_position + len(self.shortcut_key_tok), "insert_point_bt": insertion_point, "insert_point_ed": insertion_point+len(tokens_needle)}
@@ -455,7 +452,6 @@ class LLMNeedleHaystackTester:
             encoded = self.enc.encode(context)
             return len(self.enc.encode(context).ids)
         else:
-            
             raise ValueError("model_provider must be either 'OpenAI' or 'Anthropic'")
 
     def read_context_files(self):
