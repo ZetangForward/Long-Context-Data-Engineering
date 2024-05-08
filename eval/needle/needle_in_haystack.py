@@ -195,7 +195,7 @@ class LLMNeedleHaystackTester:
             for depth_percent in self.document_depth_percents:
                 task = self.bound_evaluate_and_log(context_length, depth_percent)
 
-    def generate_prompt(self, context, question):
+    def generate_prompt(self, context):
         # Generate the prompt for the Anthropic model
         # Replace the following line with the appropriate prompt structure
         if(self.model_provider not in ["OpenAI", "Anthropic"]):
@@ -260,6 +260,7 @@ class LLMNeedleHaystackTester:
             'context_length' : int(context_length),
             'depth_percent' : float(depth_percent),
             'version' : self.results_version,
+            'retrieval_question': self.retrieval_question,
             'needle' : self.needle,
             'model_response' : response,
             'score' : score,
