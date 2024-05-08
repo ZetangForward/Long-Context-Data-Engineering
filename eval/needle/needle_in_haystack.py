@@ -262,7 +262,6 @@ class LLMNeedleHaystackTester:
                 prefix_logits, needle_logits, suffix_logits = outputs.logits[0, exp_st-1:st-1, :], outputs.logits[0, st-1:end-1, :], outputs.logits[0, end-1:exp_end-1, :]
                 prefix_labels, needle_labels, suffix_labels = input_ids[0,exp_st:st], input_ids[0,st:end], input_ids[0,end:exp_end]
                 loss_fct = torch.nn.CrossEntropyLoss(reduction="mean")
-                import pdb; pdb.set_trace()
                 prefix_ppl, needle_ppl = torch.exp(loss_fct(prefix_logits, prefix_labels)), torch.exp(loss_fct(needle_logits, needle_labels))
                 prefix_ppl, needle_ppl = prefix_ppl.item(), needle_ppl.item()
                 if end != exp_end:                                     
