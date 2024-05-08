@@ -70,7 +70,7 @@ class LLMNeedleHaystackTester:
     def __init__(self, haystack_dir="PaulGrahamEssays", results_version = 1, context_lengths_min = 1000, context_lengths_max = 128000, 
                  context_lengths_num_intervals = 40, context_lengths = None, document_depth_percent_min = 0, document_depth_percent_max = 100, 
                  insert_short_key_id = 0, document_depth_percent_intervals = 10, document_depth_percents = None, anthropic_api_key = None, 
-                 document_depth_percent_interval_type = "linear", model_provider = "OpenAI", openai_api_key=None, model_name='', 
+                 document_depth_percent_interval_type = "linear", model_provider = "OpenAI", openai_api_key=None, model_name='', short_cut_strategy="random", 
                  model_name_suffix=None, num_concurrent_requests = 1, save_results = True, save_contexts = True, final_context_length_buffer = 200, 
                  seconds_to_sleep_between_completions = None, print_ongoing_status = True, ca_needle = 1, template_idx = 0, shortcut_position=0, tensor_parallel=True):
         """Functions
@@ -127,6 +127,7 @@ class LLMNeedleHaystackTester:
         self.model_provider = model_provider
         self.template_idx = template_idx
         self.shortcut_position = shortcut_position
+        self.short_cut_strategy = short_cut_strategy
         self.testing_results = []
 
         if(self.model_provider not in ["OpenAI", "Anthropic"]):
@@ -416,14 +417,16 @@ class LLMNeedleHaystackTester:
         else: period_tokens = self.encode_text_to_tokens('.')
 
         if depth_percent == 100:
-            # If your depth percent is 100 (which means your needle is the last thing in the doc), throw it at the end
-            shortcut_key_position = random.randint(self.final_context_length_buffer, len(tokens_context) - 1)
-            tokens_new_context = tokens_context[:shortcut_key_position]
-            # insert shortcut key in random position, before a whole sequence
-            while tokens_new_context and tokens_new_context[-1] not in period_tokens:  
-                shortcut_key_position -= 1
+            if self.short_cut_strategy == "random":
+                shortcut_key_position = random.randint(self.final_context_length_buffer, len(tokens_context) - 1)
                 tokens_new_context = tokens_context[:shortcut_key_position]
-            tokens_new_context += self.shortcut_key_tok + tokens_context[:shortcut_key_position] + tokens_needle
+                # insert shortcut key in random position, before a whole sequence
+                while tokens_new_context and tokens_new_context[-1] not in period_tokens:  
+                    shortcut_key_position -= 1
+                    tokens_new_context = tokens_context[:shortcut_key_position]
+                tokens_new_context += self.shortcut_key_tok + tokens_context[:shortcut_key_position] + tokens_needle
+            elif self.short_cut_strategy == "before":
+                tokens_new_context = tokens_context + self.shortcut_key_tok + tokens_needle
             insertion_point = len(tokens_new_context) - len(tokens_needle)
         else:
             # Go get the position (in terms of tokens) to insert your needle
@@ -439,29 +442,36 @@ class LLMNeedleHaystackTester:
 
             print("insertion at %d" % insertion_point)
         
-            tokens_new_context += tokens_needle + tokens_context[insertion_point:]
+            if self.short_cut_strategy == "random":
+                tokens_new_context += tokens_needle + tokens_context[insertion_point:]
+                if self.shortcut_position == 0: 
+                    short_pos_st, short_pos_ed = self.final_context_length_buffer, insertion_point
+                elif self.shortcut_position == 1: 
+                    short_pos_st, short_pos_ed = insertion_point + len(tokens_needle), len(tokens_new_context) - 1
+                
+                if short_pos_st > short_pos_ed:  # can only insert shortcut key after the needle
+                    self.shortcut_position = 1
+                    short_pos_st, short_pos_ed = insertion_point + len(tokens_needle), len(tokens_new_context) - 1
 
-            if self.shortcut_position == 0: 
-                short_pos_st, short_pos_ed = self.final_context_length_buffer, insertion_point
-            elif self.shortcut_position == 1: 
-                short_pos_st, short_pos_ed = insertion_point + len(tokens_needle), len(tokens_new_context) - 1
-            
-            if short_pos_st > short_pos_ed:  # can only insert shortcut key after the needle
-                self.shortcut_position = 1
-                short_pos_st, short_pos_ed = insertion_point + len(tokens_needle), len(tokens_new_context) - 1
+                # Insert Shortcut squence
+                shortcut_key_position = random.randint(short_pos_st, short_pos_ed)
+                prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
+                if self.shortcut_position == 0: # insert in the left, shift to left position 
+                    while suffix and suffix[0] not in period_tokens:  # insert shortcut key before a whole sequence
+                        shortcut_key_position -= 1 
+                        prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
+                else: # insert in the right, shift to right position  
+                    while suffix and prefix[-1] not in period_tokens:  
+                        shortcut_key_position += 1 
+                        prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
+                tokens_new_context = prefix + self.shortcut_key_tok + suffix
+            elif self.short_cut_strategy == "before":
+                tokens_new_context += self.shortcut_key_tok + tokens_needle + tokens_context[insertion_point:]
+            elif self.short_cut_strategy == "after":
+                tokens_new_context += self.shortcut_key_tok + tokens_needle + tokens_context[insertion_point:]
+            else:
+                raise NotImplementedError
 
-            # Insert Shortcut squence
-            shortcut_key_position = random.randint(short_pos_st, short_pos_ed)
-            prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
-            if self.shortcut_position == 0: # insert in the left, shift to left position 
-                while suffix and suffix[0] not in period_tokens:  # insert shortcut key before a whole sequence
-                    shortcut_key_position -= 1 
-                    prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
-            else: # insert in the right, shift to right position  
-                while suffix and prefix[-1] not in period_tokens:  
-                    shortcut_key_position += 1 
-                    prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
-            tokens_new_context = prefix + self.shortcut_key_tok + suffix
 
         # Convert back to a string and return it
         new_context = self.decode_tokens(tokens_new_context)
@@ -543,7 +553,8 @@ if __name__ == "__main__":
     parser.add_argument('--model_path', type=str, default=None, help='path to model')
     parser.add_argument('--model_name', type=str, default=None, help='name of model')
     parser.add_argument('--model_name_suffix', type=str, default=None, help='name of model')
-    parser.add_argument('--model_provider', type=str, default="LLaMA", help='which model to use')
+    parser.add_argument('--model_provider', type=str, default="LLaMA", help='which model to use') 
+    parser.add_argument('--short_cut_strategy', type=str, default="random", help='how to insert the shortcut', choices=['random', 'before', 'after']) 
     parser.add_argument('--api_key', type=str, default="", help='OpenAI API Key')
     parser.add_argument('-tp', '--tensor_parallel', action='store_true', help='use tensor parallel')
     # parser = add_args(parser)
@@ -567,7 +578,8 @@ if __name__ == "__main__":
         template_idx=args.template_idx,
         insert_short_key_id=args.insert_short_key_id,
         shortcut_position=args.shortcut_position,
-        tensor_parallel=args.tensor_parallel
+        tensor_parallel=args.tensor_parallel,
+        short_cut_strategy=args.short_cut_strategy,
     )
 
     ht.start_test(args)
