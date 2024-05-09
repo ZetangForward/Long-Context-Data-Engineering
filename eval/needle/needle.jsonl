@@ -8,3 +8,4 @@
 {"idx": 8, "value": "The best thing to do in San Francisco is go to the beach.", "tag": "model generatte w/o \n", "retrieval_question": "The best thing to do in San Francisco is"}
 {"idx": 9, "value": "\nThe best thing to do in San Francisco is go to the beach.\n", "tag": "model generatte w/ \n", "retrieval_question": "The best thing to do in San Francisco is"}
 {"idx": 10, "value": "\nThe best thing to do in San Francisco is go to the beach. The best thing to do in San Francisco is eat a sandwich and sit in Dolores Park on a sunny day.\n", "tag": "shortcut key before needle\n", "retrieval_question": "The best thing to do in San Francisco is"}
+{"idx": 11, "value": "Forbes Magazine rated Beyonce as the most powerful female musician. She released a new album with Lisa, who is is a prominent member of the popular South Korean girl group BLACKPINK.", "retrieval_question": "including perturbance"}
