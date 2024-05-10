@@ -334,7 +334,6 @@ class LLMNeedleHaystackTester:
         """
         Checks to see if a result has already been evaluated or not
         """
-
         results_dir = 'results/' + self.model_version
         print("Searching existing results at %s" % results_dir)
         if not os.path.exists(results_dir):
@@ -487,7 +486,6 @@ class LLMNeedleHaystackTester:
                 shortcut_key_position = insertion_point
             else:
                 raise NotImplementedError
-
 
         # Convert back to a string and return it
         new_context = self.decode_tokens(tokens_new_context)
