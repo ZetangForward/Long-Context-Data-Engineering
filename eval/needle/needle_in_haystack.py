@@ -12,9 +12,17 @@ python -u needle_in_haystack.py --s_len 0 --e_len 128000\
 
 # LLaMA 2 32K. Remember to download the model first
 (
+CUDA_VISIBLE_DEVICES=2,3,4,5 python -u needle_in_haystack.py --s_len 0 --e_len 64000 --model_provider LLaMA --model_path /vepfs/wcf/G/zecheng/hf_models/llama-2-7b-80k -n 12 -t 2 --insert_short_key_id 0 --model_name_suffix n12t2s0 --shortcut_position 0 -tp
+) 2>&1  | tee logs/eval_llama2_32k_instruct.log
+
 CUDA_VISIBLE_DEVICES=2 python -u needle_in_haystack.py --s_len 0 --e_len 64000 --model_provider LLaMA --model_path /vepfs/wcf/G/zecheng/hf_models/llama-2-7b-80k -n 6 -t 2 --insert_short_key_id 1 --model_name_suffix test --shortcut_position 0 -tp
 ) 2>&1  | tee logs/eval_llama2_32k_instruct.log
 
+# Mistral-7B
+CUDA_VISIBLE_DEVICES=2,3,4,5 python -u needle_in_haystack.py --s_len 0 --e_len 64000 --model_provider Mistral --model_path /vepfs/wcf/G/zecheng/hf_models/Mistral-7B-Instruct-v0.2 -n 11 -t 2 --insert_short_key_id 0 --model_name_suffix test --model_name_suffix n11t2s0 --shortcut_position 0 -tp
+
+
+ 
 # LongChat. Remember to download the model first
 (
 python -u needle_in_haystack.py --s_len 0 --e_len 128000\
@@ -111,9 +119,9 @@ class LLMNeedleHaystackTester:
         """
     
         self.needle = all_needles[ca_needle-1]['value']
-        self.shortcut_key = shortcut_keys[insert_short_key_id]['value']
+        self.shortcut_key = shortcut_keys[insert_short_key_id-1]['value']
         log_c(all_needles[ca_needle-1]['tag'])
-        log_c(shortcut_keys[insert_short_key_id]['tag'])
+        log_c(shortcut_keys[insert_short_key_id-1]['tag'])
         
         self.haystack_dir = haystack_dir
         self.retrieval_question = all_needles[ca_needle-1]['retrieval_question']
@@ -129,6 +137,11 @@ class LLMNeedleHaystackTester:
         self.shortcut_position = shortcut_position
         self.short_cut_strategy = short_cut_strategy
         self.testing_results = []
+
+        if self.model_provider.lower() == "mistral":
+            self.enc = AutoTokenizer.from_pretrained(model_name)
+            log_c("loading from %s" % model_name)
+            self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
 
         if(self.model_provider not in ["OpenAI", "Anthropic"]):
             self.enc = AutoTokenizer.from_pretrained(model_name)
@@ -493,7 +506,7 @@ class LLMNeedleHaystackTester:
 
         while self.get_context_length_in_tokens(context) < max_context_length:
             for file in glob.glob(f"{self.haystack_dir}/*.txt"):
-                with open(file, 'r') as f:
+                with open(file, 'r', encoding='utf-8') as f:
                     context += f.read()
         return context
 
