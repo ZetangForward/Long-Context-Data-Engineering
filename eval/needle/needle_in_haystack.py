@@ -135,7 +135,7 @@ class LLMNeedleHaystackTester:
         self.model_provider = model_provider
         self.template_idx = template_idx
         self.shortcut_position = shortcut_position
-        self.short_cut_strategy = short_cut_strategy
+        self.shortcut_strategy = short_cut_strategy
         self.testing_results = []
 
         if self.model_provider.lower() == "mistral":
@@ -430,7 +430,7 @@ class LLMNeedleHaystackTester:
         else: period_tokens = self.encode_text_to_tokens('.')
 
         if depth_percent == 100:
-            if self.short_cut_strategy == "random":
+            if self.shortcut_strategy == "random":
                 shortcut_key_position = random.randint(self.final_context_length_buffer, len(tokens_context) - 1)
                 tokens_new_context = tokens_context[:shortcut_key_position]
                 # insert shortcut key in random position, before a whole sequence
@@ -438,8 +438,9 @@ class LLMNeedleHaystackTester:
                     shortcut_key_position -= 1
                     tokens_new_context = tokens_context[:shortcut_key_position]
                 tokens_new_context += self.shortcut_key_tok + tokens_context[:shortcut_key_position] + tokens_needle
-            elif self.short_cut_strategy == "before":
+            elif self.shortcut_strategy == "before":
                 tokens_new_context = tokens_context + self.shortcut_key_tok + tokens_needle
+                shortcut_key_position = len(tokens_new_context) - len(tokens_needle)
             insertion_point = len(tokens_new_context) - len(tokens_needle)
         else:
             # Go get the position (in terms of tokens) to insert your needle
@@ -455,7 +456,7 @@ class LLMNeedleHaystackTester:
 
             print("insertion at %d" % insertion_point)
         
-            if self.short_cut_strategy == "random":
+            if self.shortcut_strategy == "random":
                 tokens_new_context += tokens_needle + tokens_context[insertion_point:]
                 if self.shortcut_position == 0: 
                     short_pos_st, short_pos_ed = self.final_context_length_buffer, insertion_point
@@ -478,10 +479,12 @@ class LLMNeedleHaystackTester:
                         shortcut_key_position += 1 
                         prefix, suffix = tokens_new_context[:shortcut_key_position], tokens_new_context[shortcut_key_position:]
                 tokens_new_context = prefix + self.shortcut_key_tok + suffix
-            elif self.short_cut_strategy == "before":
+            elif self.shortcut_strategy == "before":
                 tokens_new_context += self.shortcut_key_tok + tokens_needle + tokens_context[insertion_point:]
-            elif self.short_cut_strategy == "after":
+                shortcut_key_position = insertion_point
+            elif self.shortcut_strategy == "after":
                 tokens_new_context += self.shortcut_key_tok + tokens_needle + tokens_context[insertion_point:]
+                shortcut_key_position = insertion_point
             else:
                 raise NotImplementedError
 
