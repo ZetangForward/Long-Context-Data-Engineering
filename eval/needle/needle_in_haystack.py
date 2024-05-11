@@ -161,12 +161,12 @@ class LLMNeedleHaystackTester:
             self.model_to_test.resize_token_embeddings(32001)
             
 
-        if self.model_provider.lower() == "mistral":
+        elif self.model_provider.lower() == "mistral":
             self.enc = AutoTokenizer.from_pretrained(model_name)
             log_c("loading from %s" % model_name)
             self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
 
-        if(self.model_provider not in ["OpenAI", "Anthropic"]):
+        elif(self.model_provider not in ["OpenAI", "Anthropic"]):
             self.enc = AutoTokenizer.from_pretrained(model_name)
             log_c("loading from %s" % model_name)
             self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
@@ -283,7 +283,7 @@ class LLMNeedleHaystackTester:
                     suffix_ppl = suffix_ppl.item()
                 else:
                     suffix_ppl = 0.0  # if 0.0 then no suffix
-                output_ids = self.model_to_test.generate(input_ids, max_new_tokens=50)
+                output_ids = self.model_to_test.generate(input_ids, max_new_tokens=50) if self.model_provider.lower != "longlora" else self.model_to_test.generate(input_ids, max_new_tokens=50, use_cache=False)
                 response = self.enc.decode(output_ids[0][input_ids.shape[1]:], skip_special_tokens=True).strip()
 
         test_end_time = time.time()
