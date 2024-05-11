@@ -55,6 +55,8 @@ from datetime import datetime, timezone
 import time
 import torch
 from modelzipper.tutils import *
+from llama_attn_replace import replace_llama_attn
+
 
 scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
 
@@ -67,11 +69,6 @@ def reset_rope(model, model_max_train_len, scaling_factor):
         l.self_attn.rotary_emb._set_cos_sin_cache(seq_len=model_max_train_len, device="cpu", dtype=torch.float32)
     return
 
-"""
-有哪些原因会导致捷径学习？
-1. 变化的PPL -> 导致head过分关注某些内容
-2. 训练数据泄露 -> 使用模型PPL大的sentence作为passkey还能检索出来吗
-"""
 
 class LLMNeedleHaystackTester:
 
@@ -137,6 +134,32 @@ class LLMNeedleHaystackTester:
         self.shortcut_position = shortcut_position
         self.shortcut_strategy = short_cut_strategy
         self.testing_results = []
+        
+        if self.model_provider.lower == "longlora":
+            replace_llama_attn(use_full=True)
+            # Set RoPE scaling factor
+            config = transformers.AutoConfig.from_pretrained(model_name)
+            context_size = 102400
+            orig_ctx_len = getattr(config, "max_position_embeddings", None) # this value should be 4096 for LLaMA2 models
+            if orig_ctx_len and context_size > orig_ctx_len:
+                scaling_factor = float(math.ceil(context_size / orig_ctx_len))
+                config.rope_scaling = {"type": "linear", "factor": scaling_factor}
+            self.enc = AutoTokenizer.from_pretrained(
+                model_name,
+                model_max_length=context_size if context_size > orig_ctx_len else orig_ctx_len,
+                padding_side="right",
+                # use_fast=False,
+            )
+            print("loading from %s" % model_name)
+
+            self.model_to_test = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                config=config,
+                torch_dtype=torch.float16,
+                device_map="auto",
+            )
+            self.model_to_test.resize_token_embeddings(32001)
+            
 
         if self.model_provider.lower() == "mistral":
             self.enc = AutoTokenizer.from_pretrained(model_name)
@@ -360,6 +383,7 @@ class LLMNeedleHaystackTester:
             context, insert_meta_data = self.insert_needle(context, depth_percent, context_length) 
         return context, insert_meta_data
     
+    
     def encode_text_to_tokens(self, text):
         if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
             return self.enc.encode(text)
@@ -491,6 +515,7 @@ class LLMNeedleHaystackTester:
         new_context = self.decode_tokens(tokens_new_context)
         return new_context, {"shortcut_key_pos_bt": shortcut_key_position, "shortcut_key_pos_ed": shortcut_key_position + len(self.shortcut_key_tok), "insert_point_bt": insertion_point, "insert_point_ed": insertion_point+len(tokens_needle)}
 
+
     def get_context_length_in_tokens(self, context):
         if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
             return len(self.enc.encode(context))
@@ -500,6 +525,7 @@ class LLMNeedleHaystackTester:
             return len(self.enc.encode(context).ids)
         else:
             raise ValueError("model_provider must be either 'OpenAI' or 'Anthropic'")
+
 
     def read_context_files(self):
         context = ""
@@ -511,6 +537,7 @@ class LLMNeedleHaystackTester:
                     context += f.read()
         return context
 
+
     def get_tokens_from_context(self, context):
         if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
             return self.enc.encode(context)
@@ -519,6 +546,7 @@ class LLMNeedleHaystackTester:
             return self.enc.encode(context).ids
         else:
             raise ValueError("model_provider must be either 'OpenAI' or 'Anthropic'")
+       
         
     def decode_tokens(self, tokens, context_length=None):
         if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
@@ -528,6 +556,7 @@ class LLMNeedleHaystackTester:
             return self.enc.decode(tokens[:context_length])
         else:
             raise ValueError("model_provider must be either 'OpenAI' or 'Anthropic'")
+
 
     def encode_and_trim(self, context, context_length):
         tokens = self.get_tokens_from_context(context)
