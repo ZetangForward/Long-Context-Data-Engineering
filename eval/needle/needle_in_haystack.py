@@ -135,7 +135,8 @@ class LLMNeedleHaystackTester:
         self.shortcut_strategy = short_cut_strategy
         self.testing_results = []
         
-        if self.model_provider.lower == "longlora":
+        if self.model_provider.lower() == "longlora":
+            log_c("replace the attention layer")
             replace_llama_attn(use_full=True)
             # Set RoPE scaling factor
             config = transformers.AutoConfig.from_pretrained(model_name)
@@ -156,15 +157,15 @@ class LLMNeedleHaystackTester:
                 model_name,
                 config=config,
                 torch_dtype=torch.float16,
-                device_map="auto",
+                device_map="balanced_low_0",
             )
             self.model_to_test.resize_token_embeddings(32001)
             
-
         elif self.model_provider.lower() == "mistral":
             self.enc = AutoTokenizer.from_pretrained(model_name)
             log_c("loading from %s" % model_name)
-            self.model_to_test = AutoModelForCausalLM.from_pretrained(model_name, use_flash_attention_2="flash_attention_2", torch_dtype=torch.bfloat16).eval()
+            self.model_to_test = transformers.MistralForCausalLM.from_pretrained(
+                model_name, torch_dtype="auto", device_map='auto', use_flash_attention_2="flash_attention_2").eval()
 
         elif(self.model_provider not in ["OpenAI", "Anthropic"]):
             self.enc = AutoTokenizer.from_pretrained(model_name)
@@ -385,7 +386,7 @@ class LLMNeedleHaystackTester:
     
     
     def encode_text_to_tokens(self, text):
-        if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
+        if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM", "LongLora"]:
             return self.enc.encode(text)
         elif self.model_provider == "Anthropic":
             # Assuming you have a different encoder for Anthropic
@@ -447,7 +448,7 @@ class LLMNeedleHaystackTester:
             tokens_context = tokens_context[:context_length - len(tokens_needle) - len(self.shortcut_key_tok)]
 
         # We want to make sure that we place our needle at a sentence break so we first see what token a '.' is
-        if(self.model_provider in ["LLaMA", "LongLLaMA"]): period_tokens = [29889, 869]
+        if(self.model_provider in ["LLaMA", "LongLLaMA", "LongLora"]): period_tokens = [29889, 869]
         elif(self.model_provider == "Mistral"): period_tokens = [842, 28723]
         elif(self.model_provider == "GLM"): period_tokens = [918, 30930]
         else: period_tokens = self.encode_text_to_tokens('.')
@@ -517,7 +518,7 @@ class LLMNeedleHaystackTester:
 
 
     def get_context_length_in_tokens(self, context):
-        if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
+        if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM", "LongLora"]:
             return len(self.enc.encode(context))
         elif self.model_provider == "Anthropic":
             # Assuming you have a different encoder for Anthropic
@@ -539,7 +540,7 @@ class LLMNeedleHaystackTester:
 
 
     def get_tokens_from_context(self, context):
-        if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
+        if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM", "LongLora"]:
             return self.enc.encode(context)
         elif self.model_provider == "Anthropic":
             # Assuming you have a different encoder for Anthropic
@@ -549,7 +550,7 @@ class LLMNeedleHaystackTester:
        
         
     def decode_tokens(self, tokens, context_length=None):
-        if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM"]:
+        if self.model_provider in ["OpenAI", "LLaMA", "Mistral", "GLM", "LongLora"]:
             return self.enc.decode(tokens[:context_length])
         elif self.model_provider == "Anthropic":
             # Assuming you have a different decoder for Anthropic
